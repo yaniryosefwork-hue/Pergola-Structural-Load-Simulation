@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>סימולציית עומס לגג עץ - 3D</title>
+    
+    <!-- Tailwind CSS for UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js and OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Inter', sans-serif; background-color: #f0f4f8; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        
+        /* Custom UI Overlay over the 3D Canvas */
+        .ui-panel {
+            position: absolute;
+            top: 4.5rem; /* מורד מעט כדי לאפשר מקום לכפתורים */
+            z-index: 10;
+            max-height: calc(100vh - 6rem);
+            overflow-y: auto;
+            pointer-events: auto;
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+        }
+        /* Increased widths for new data */
+        #controls-panel { right: 1.5rem; width: 340px; }
+        #controls-panel.closed { transform: translateX(120%); opacity: 0; pointer-events: none; }
+        
+        #bom-panel { left: 1.5rem; width: 440px; }
+        #bom-panel.closed { transform: translateX(-120%); opacity: 0; pointer-events: none; }
+
+        /* 3D Label Styling */
+        .label {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            color: #1e293b;
+            font-family: sans-serif;
+            padding: 2px 6px;
+            background: rgba(255, 255, 255, 0.85);
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            pointer-events: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            direction: ltr;
+        }
+
+        /* Forms */
+        .input-group { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+        .input-group input, .input-group select { width: 90px; padding: 0.25rem; border: 1px solid #ccc; border-radius: 4px; text-align: left; direction: ltr; font-size: 0.875rem;}
+        
+        details summary::-webkit-details-marker { display:none; }
+
+        /* Dimension Labels */
+        .dim-label {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            color: #7f1d1d;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid #fca5a5;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            pointer-events: none;
+            direction: ltr;
+            z-index: 10;
+        }
+
+        /* Cut List Number Labels */
+        .cut-label {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: #2563eb;
+            border: 1px solid #1e40af;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-family: system-ui, -apple-system, sans-serif;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            pointer-events: none;
+            z-index: 11;
+        }
+
+        /* Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #bom-panel, #bom-panel * { visibility: visible; }
+            #bom-panel { position: absolute; left: 0; top: 0; width: 100%; max-height: none; overflow: visible; box-shadow: none; border: none; transform: none !important; margin: 0; padding: 0; }
+            #btn-close-bom, #btn-print-bom, .print-hide { display: none !important; }
+            .ui-panel { background: white; border: none; }
+            #canvas-container, button { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+    <div id="labels-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; overflow: hidden;"></div>
+
+    <!-- Floating Toggle Buttons -->
+    <button id="btn-toggle-bom" class="absolute top-4 left-4 z-20 bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-full shadow-md border border-gray-200 font-bold text-sm text-gray-700 hover:bg-gray-50 hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer">
+        <span>📋</span> כתב כמויות
+    </button>
+    <button id="btn-toggle-controls" class="absolute top-4 right-4 z-20 bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-full shadow-md border border-gray-200 font-bold text-sm text-gray-700 hover:bg-gray-50 hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer">
+        <span>⚙️</span> פרמטרים הנדסיים
+    </button>
+
+    <!-- Right: UI Control Panel -->
+    <div id="controls-panel" class="ui-panel bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl p-4 border border-gray-100">
+        <div class="flex justify-between items-center border-b pb-2 mb-4">
+            <h1 class="text-xl font-bold text-gray-800">פרמטרים הנדסיים</h1>
+            <button id="btn-close-controls" class="text-gray-400 hover:text-red-500 transition text-2xl leading-none cursor-pointer">&times;</button>
+        </div>
+        
+        <!-- Accordion 1: מידות -->
+        <details class="mb-2 bg-gray-50 rounded-lg border border-gray-200 shadow-sm" open>
+            <summary class="font-bold text-gray-700 p-3 cursor-pointer bg-gray-100 rounded-t-lg hover:bg-gray-200 transition">מידות מבנה</summary>
+            <div class="p-3 space-y-1">
+                <div class="input-group">
+                    <label class="text-sm font-semibold text-gray-700">מרחק התפשטות מהקיר (X) [מ']</label>
+                    <input type="number" id="inProjX" value="6.0" step="0.5" min="1">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm font-semibold text-gray-700">מרחק התפשטות מהקיר (Y) [מ']</label>
+                    <input type="number" id="inProjY" value="4.0" step="0.5" min="1">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm font-semibold text-gray-700">אורך קורה לאורך הקיר (X) [מ']</label>
+                    <input type="number" id="inLenX" value="6.0" step="0.5" min="1">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm font-semibold text-gray-700">אורך קורה לאורך הקיר (Y) [מ']</label>
+                    <input type="number" id="inLenY" value="4.0" step="0.5" min="1">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm font-semibold text-gray-700">גובה קורה היקפית</label>
+                    <input type="number" id="inPerimHeight" value="3.5" step="0.1" min="2">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm font-semibold text-gray-700">גובה רכס בפינה</label>
+                    <input type="number" id="inApexHeight" value="5.5" step="0.1" min="3">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm font-semibold text-gray-700">מרווח קורות [מטר]</label>
+                    <input type="number" id="inSpacing" value="0.8" step="0.05" min="0.3" max="1.5">
+                </div>
+            </div>
+        </details>
+
+        <!-- Accordion 2: חתכים -->
+        <details class="mb-2 bg-gray-50 rounded-lg border border-gray-200 shadow-sm">
+            <summary class="font-bold text-gray-700 p-3 cursor-pointer bg-gray-100 rounded-t-lg hover:bg-gray-200 transition">חתכים וצבעים (ס"מ)</summary>
+            <div class="p-3 space-y-2">
+                <div class="input-group mb-4 pb-2 border-b border-gray-200">
+                    <label class="text-sm font-bold text-gray-800">קירות המבנה</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color" id="colorWall" value="#eae0c8" class="w-6 h-6 p-0 border-0 rounded cursor-pointer" title="בחר צבע לקיר">
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">עמודים</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color" id="colorCol" value="#8b5a2b" class="w-6 h-6 p-0 border-0 rounded cursor-pointer" title="בחר צבע עמודים">
+                        <select id="profCol" class="w-20">
+                            <option value="10,10">10x10</option>
+                            <option value="15,15" selected>15x15</option>
+                            <option value="20,20">20x20</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">קורות היקף</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color" id="colorPerim" value="#a0522d" class="w-6 h-6 p-0 border-0 rounded cursor-pointer" title="בחר צבע היקף">
+                        <select id="profPerim" class="w-20">
+                            <option value="5,10">5x10</option>
+                            <option value="5,15" selected>5x15</option>
+                            <option value="10,15">10x15</option>
+                            <option value="15,15">15x15</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">קורה ראשית (רכס)</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color" id="colorMain" value="#cd853f" class="w-6 h-6 p-0 border-0 rounded cursor-pointer" title="בחר צבע קורה ראשית">
+                        <select id="profMain" class="w-20">
+                            <option value="5,15">5x15</option>
+                            <option value="10,15">10x15</option>
+                            <option value="10,20" selected>10x20</option>
+                            <option value="15,20">15x20</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">קורות משניות</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color" id="colorRafter" value="#deb887" class="w-6 h-6 p-0 border-0 rounded cursor-pointer" title="בחר צבע קורות משניות">
+                        <select id="profRafter" class="w-20">
+                            <option value="5,10">5x10</option>
+                            <option value="5,15" selected>5x15</option>
+                            <option value="10,10">10x10</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Accordion 3: מחירים -->
+        <details class="mb-2 bg-gray-50 rounded-lg border border-gray-200 shadow-sm">
+            <summary class="font-bold text-gray-700 p-3 cursor-pointer bg-gray-100 rounded-t-lg hover:bg-gray-200 transition">מחירים (₪)</summary>
+            <div class="p-3 space-y-1">
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">עמוד (למטר)</label>
+                    <input type="number" id="priceCol" value="60" step="5" min="0">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">ק. היקף (למטר)</label>
+                    <input type="number" id="pricePerim" value="35" step="5" min="0">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">ק. ראשית (למטר)</label>
+                    <input type="number" id="priceMain" value="80" step="5" min="0">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">ק. משנית (למטר)</label>
+                    <input type="number" id="priceRafter" value="35" step="5" min="0">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">סנטף (למ"ר)</label>
+                    <input type="number" id="priceSantaf" value="45" step="5" min="0">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">לייסט 2x4 (למטר)</label>
+                    <input type="number" id="priceLath" value="4" step="1" min="0">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">בורג קונסט' 8x120</label>
+                    <input type="number" id="priceWoodScrew" value="1.5" step="0.5" min="0">
+                </div>
+                <div class="input-group">
+                    <label class="text-sm text-gray-700">בורג סנטף 5x50</label>
+                    <input type="number" id="priceSantafScrew" value="0.5" step="0.1" min="0">
+                </div>
+            </div>
+        </details>
+
+        <!-- Accordion 4: תצוגה -->
+        <details class="mb-4 bg-gray-50 rounded-lg border border-gray-200 shadow-sm print-hide" open>
+            <summary class="font-bold text-gray-700 p-3 cursor-pointer bg-gray-100 rounded-t-lg hover:bg-gray-200 transition">תצוגה</summary>
+            <div class="p-3 space-y-2">
+                <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
+                    <input type="checkbox" id="showSantaf" class="w-4 h-4 text-blue-600 rounded" checked>
+                    <span class="text-sm font-semibold text-gray-700">הצג חיפוי סנטף (כולל 25 ס"מ בליטה)</span>
+                </label>
+                <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
+                    <input type="checkbox" id="showLaths" class="w-4 h-4 text-blue-600 rounded" checked>
+                    <span class="text-sm font-semibold text-gray-700">הצג תשתית לייסטים</span>
+                </label>
+                <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
+                    <input type="checkbox" id="showDims" class="w-4 h-4 text-blue-600 rounded">
+                    <span class="text-sm font-semibold text-gray-700">הצג מידות על המודל</span>
+                </label>
+                <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
+                    <input type="checkbox" id="showCutIds" class="w-4 h-4 text-blue-600 rounded" checked>
+                    <span class="text-sm font-semibold text-gray-700">הצג מספרי גיליון חיתוך על המודל</span>
+                </label>
+            </div>
+        </details>
+
+        <!-- Engineering Data Overlay -->
+        <div class="space-y-3 border-t pt-4">
+            <h2 class="text-md font-bold text-gray-800 mb-2">נתוני תכנון מקומיים</h2>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-700">אורך קורה ראשית:</span>
+                <span id="mainBeamLenDisp" class="font-bold text-blue-600">0 מ'</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-700">אורך קורה משנית (מקס'):</span>
+                <span id="maxRafterLenDisp" class="font-bold text-blue-600">0 מ'</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-700">שיפוע קורה ראשית:</span>
+                <span id="slopeDeg" class="font-bold text-blue-600">0°</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-700">שיפוע באחוזים:</span>
+                <span id="slopePct" class="font-bold text-blue-600">0%</span>
+            </div>
+            <div class="mt-2">
+                <div class="flex justify-between text-sm font-medium mb-1">
+                    <span class="text-gray-700">עומס בכפיפה (ראשית):</span>
+                    <span id="mainLoadVal" class="text-red-600 font-bold">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2">
+                    <div id="mainLoadBar" class="bg-red-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Left: BOM Panel -->
+    <div id="bom-panel" class="ui-panel bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl p-6 border border-gray-100">
+        <div class="flex justify-between items-center border-b pb-2 mb-4">
+            <h2 class="text-xl font-bold text-gray-800">כתב כמויות ומחירים</h2>
+            <div class="flex gap-3 items-center">
+                <button id="btn-print-bom" class="text-blue-600 hover:text-blue-800 font-bold transition flex items-center gap-1 cursor-pointer" title="הדפס למחסן עצים">
+                    <span>🖨️</span> <span class="text-sm">הדפס</span>
+                </button>
+                <button id="btn-close-bom" class="text-gray-400 hover:text-red-500 transition text-2xl leading-none cursor-pointer">&times;</button>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-right">
+                <thead class="bg-gray-100 text-gray-600">
+                    <tr>
+                        <th class="p-2 rounded-tr-md w-8 text-center">צבע</th>
+                        <th class="p-2">פריט</th>
+                        <th class="p-2">חתך</th>
+                        <th class="p-2">כמות</th>
+                        <th class="p-2">אורך/שטח</th>
+                        <th class="p-2 rounded-tl-md">סה"כ ₪</th>
+                    </tr>
+                </thead>
+                <tbody id="bomTableBody" class="divide-y divide-gray-100">
+                    <!-- Rows will be populated by JS -->
+                </tbody>
+                <tfoot class="font-bold bg-blue-50 text-blue-900 border-t-2 border-blue-200">
+                    <tr>
+                        <td class="p-3" colspan="5">סה"כ לתשלום (חומרים בלבד):</td>
+                        <td class="p-3 text-lg" id="bomTotalPrice">0 ₪</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        <div class="mt-4 text-xs text-gray-500 print:hidden">
+            * אורכים במטר רץ, שטח סנטף במ"ר. מומלץ להוסיף 10-15% פחת.
+        </div>
+
+        <!-- Detailed Cut List -->
+        <div class="mt-6 border-t pt-4 print:mt-4 print:pt-4">
+            <h3 class="font-bold text-gray-800 mb-2">גיליון חיתוך מפורט (Cut List)</h3>
+            <div class="overflow-y-auto max-h-52 border rounded-md print:max-h-none print:border-none print:overflow-visible">
+                <table class="w-full text-xs text-right">
+                    <thead class="bg-gray-100 sticky top-0 print:bg-transparent print:border-b-2 print:border-gray-800">
+                        <tr>
+                            <th class="p-2">#</th>
+                            <th class="p-2">סוג קורה</th>
+                            <th class="p-2">אורך לחיתוך (מ')</th>
+                            <th class="p-2">זווית חיתוך בבסיס</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cutListTableBody" class="divide-y divide-gray-100">
+                        <!-- Rows populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Logic -->
+    <script>
+        // DOM Elements
+        const inProjX = document.getElementById('inProjX');
+        const inProjY = document.getElementById('inProjY');
+        const inLenX = document.getElementById('inLenX');
+        const inLenY = document.getElementById('inLenY');
+        const inPerimHeight = document.getElementById('inPerimHeight');
+        const inApexHeight = document.getElementById('inApexHeight');
+        const inSpacing = document.getElementById('inSpacing');
+        
+        const profCol = document.getElementById('profCol');
+        const profPerim = document.getElementById('profPerim');
+        const profMain = document.getElementById('profMain');
+        const profRafter = document.getElementById('profRafter');
+        
+        const colorCol = document.getElementById('colorCol');
+        const colorPerim = document.getElementById('colorPerim');
+        const colorMain = document.getElementById('colorMain');
+        const colorRafter = document.getElementById('colorRafter');
+        
+        const priceCol = document.getElementById('priceCol');
+        const pricePerim = document.getElementById('pricePerim');
+        const priceMain = document.getElementById('priceMain');
+        const priceRafter = document.getElementById('priceRafter');
+        const priceSantaf = document.getElementById('priceSantaf');
+        
+        const priceLath = document.getElementById('priceLath');
+        const priceWoodScrew = document.getElementById('priceWoodScrew');
+        const priceSantafScrew = document.getElementById('priceSantafScrew');
+        
+        const colorWall = document.getElementById('colorWall');
+        const showSantaf = document.getElementById('showSantaf');
+        const showLaths = document.getElementById('showLaths');
+        const showDims = document.getElementById('showDims');
+        const showCutIds = document.getElementById('showCutIds');
+        
+        const mainBeamLenDisp = document.getElementById('mainBeamLenDisp');
+        const maxRafterLenDisp = document.getElementById('maxRafterLenDisp');
+        
+        const slopeDeg = document.getElementById('slopeDeg');
+        const slopePct = document.getElementById('slopePct');
+        const mainLoadVal = document.getElementById('mainLoadVal');
+        const mainLoadBar = document.getElementById('mainLoadBar');
+        
+        const bomTableBody = document.getElementById('bomTableBody');
+        const bomTotalPrice = document.getElementById('bomTotalPrice');
+        const cutListTableBody = document.getElementById('cutListTableBody');
+
+        // Three.js Variables
+        let scene, camera, renderer, controls;
+        let activeLabels = [];
+        
+        // Structure Meshes
+        let staticGroup = new THREE.Group();
+        let dynamicGroup = new THREE.Group();
+        let mainRidgeBeam;
+        let rafterBeams = [];
+        let perimeterBeams = [];
+        let columns = [];
+        let labels = {};
+        
+        let matCol, matPerim, matMain, matRafter, buildingMat; 
+        const woodMat = new THREE.MeshStandardMaterial({ color: 0xdeb887, roughness: 0.6 });
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1e293b); // Darker CAD-like background
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(15, 12, 18);
+
+            // WebGL Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.target.set(3, 3, 3);
+
+            // Lighting
+            scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight.position.set(20, 30, 20);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+
+            // Helpers (CAD Feel)
+            const gridHelper = new THREE.GridHelper(30, 30, 0x888888, 0xdcbdcbd);
+            gridHelper.position.y = 0.01;
+            scene.add(gridHelper);
+            
+            const axesHelper = new THREE.AxesHelper(10);
+            scene.add(axesHelper);
+
+            // Build Static Environment
+            buildEnvironment();
+
+            // Setup Dynamic Group
+            scene.add(dynamicGroup);
+            matCol = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.6 });
+            matPerim = new THREE.MeshStandardMaterial({ color: 0xa0522d, roughness: 0.6 });
+            matMain = new THREE.MeshStandardMaterial({ color: 0xcd853f, roughness: 0.6 });
+            matRafter = new THREE.MeshStandardMaterial({ color: 0xdeb887, roughness: 0.6 });
+            
+            // Events
+            window.addEventListener('resize', onWindowResize);
+            [inProjX, inProjY, inLenX, inLenY, inPerimHeight, inApexHeight, inSpacing].forEach(inp => {
+                if(inp) inp.addEventListener('input', updateStructure);
+            });
+
+            // Initial Build
+            updateStructure();
+        }
+
+        function buildEnvironment() {
+            scene.add(staticGroup);
+            
+            const floorMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(50, 50), floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            floor.receiveShadow = true;
+            staticGroup.add(floor);
+
+            buildingMat = new THREE.MeshStandardMaterial({ color: colorWall ? colorWall.value : 0xeae0c8 });
+            
+            // Building Walls (Outside Corner at origin, enlarged to visually support roof extensions)
+            const wall1 = new THREE.Mesh(new THREE.BoxGeometry(20, 10, 0.5), buildingMat);
+            wall1.position.set(-10, 5, -0.25);
+            wall1.castShadow = true; wall1.receiveShadow = true;
+            staticGroup.add(wall1);
+            
+            const wall2 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 10, 20), buildingMat);
+            wall2.position.set(-0.25, 5, -10);
+            wall2.castShadow = true; wall2.receiveShadow = true;
+            staticGroup.add(wall2);
+        }
+
+        function alignBeam(mesh, p1, p2, width, depth) {
+            const distance = p1.distanceTo(p2);
+            mesh.position.copy(p1).add(p2).multiplyScalar(0.5);
+            mesh.scale.set(width, depth, distance);
+            mesh.lookAt(p2);
+            return distance;
+        }
+
+        function parseProfile(selectElem) {
+            const parts = selectElem.value.split(',');
+            return { w: parseFloat(parts[0]) / 100, h: parseFloat(parts[1]) / 100, name: selectElem.options[selectElem.selectedIndex].text };
+        }
+
+        function updateStructure() {
+            // Get Params
+            const projX = parseFloat(inProjX.value) || 6;
+            const projZ = parseFloat(inProjY.value) || 4;
+            const lenX = parseFloat(inLenX.value) || 6;
+            const lenZ = parseFloat(inLenY.value) || 4;
+            const perimH = parseFloat(inPerimHeight.value) || 3.5;
+            const apexH = parseFloat(inApexHeight.value) || 5.5;
+            const spacing = parseFloat(inSpacing.value) || 0.8;
+            
+            // Parse Profiles
+            const pCol = parseProfile(profCol);
+            const pPerim = parseProfile(profPerim);
+            const pMain = parseProfile(profMain);
+            const pRafter = parseProfile(profRafter);
+
+            // Prices
+            const prCol = parseFloat(priceCol.value) || 0;
+            const prPerim = parseFloat(pricePerim.value) || 0;
+            const prMain = parseFloat(priceMain.value) || 0;
+            const prRafter = parseFloat(priceRafter.value) || 0;
+            const prSantaf = parseFloat(priceSantaf.value) || 0;
+            const prLath = parseFloat(priceLath.value) || 0;
+            const prWoodScrew = parseFloat(priceWoodScrew.value) || 0;
+            const prSantafScrew = parseFloat(priceSantafScrew.value) || 0;
+
+            // Colors
+            matCol.color.set(colorCol.value);
+            matPerim.color.set(colorPerim.value);
+            matMain.color.set(colorMain.value);
+            matRafter.color.set(colorRafter.value);
+            if(buildingMat && colorWall) {
+                buildingMat.color.set(colorWall.value);
+            }
+
+            // Clear previous dynamic meshes and labels
+            while(dynamicGroup.children.length > 0) { 
+                dynamicGroup.remove(dynamicGroup.children[0]); 
+            }
+            document.getElementById('labels-container').innerHTML = '';
+            activeLabels = [];
+            labels = {};
+            
+            const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+            let bomData = { 
+                columns: 0, colLen: 0, 
+                mainHip: 0, mainLen: 0, 
+                rafters: 0, rafterLen: 0, 
+                perim: 0, perimLen: 0,
+                santafArea: 0,
+                lathLen: 0,
+                woodScrews: 0,
+                santafScrews: 0
+            };
+
+            // Setup Cut List Logic before building elements
+            let cutListData = [];
+            let cutId = 1;
+            
+            // Log a cut for the BOM Cut List
+            const logCut = (name, p1, p2) => {
+                const len = p1.distanceTo(p2);
+                const dx = p1.x - p2.x;
+                const dz = p1.z - p2.z;
+                const dy = Math.abs(p1.y - p2.y);
+                const horiz = Math.hypot(dx, dz);
+                const pitch = horiz === 0 ? 90 : Math.atan2(dy, horiz) * (180 / Math.PI);
+                const currentId = cutId++;
+                cutListData.push({ id: currentId, name, len, pitch });
+                
+                // Add Cut ID label to 3D model
+                if (showCutIds && showCutIds.checked) {
+                    const lblDiv = document.createElement('div');
+                    lblDiv.className = 'cut-label';
+                    lblDiv.textContent = currentId;
+                    document.getElementById('labels-container').appendChild(lblDiv);
+                    
+                    const centerPos = p1.clone().lerp(p2, 0.5);
+                    centerPos.y += 0.15; // Slightly above the beam
+                    activeLabels.push({ element: lblDiv, pos: centerPos });
+                }
+            };
+
+            // 1. Columns
+            const colPos = [
+                new THREE.Vector3(projX, perimH/2, projZ),   // Corner
+                new THREE.Vector3(projX, perimH/2, -lenZ),  // Side end
+                new THREE.Vector3(-lenX, perimH/2, projZ),  // Front end
+                new THREE.Vector3(0, perimH/2, projZ),       // Front mid
+                new THREE.Vector3(projX, perimH/2, 0)        // Side mid
+            ];
+            colPos.forEach((pos, idx) => {
+                const col = new THREE.Mesh(boxGeo, matCol);
+                col.scale.set(pCol.w, perimH, pCol.h);
+                col.position.copy(pos);
+                col.castShadow = true;
+                dynamicGroup.add(col);
+                
+                // Add column to cut list
+                logCut(`עמוד תמך ${idx + 1}`, new THREE.Vector3(pos.x, 0, pos.z), new THREE.Vector3(pos.x, perimH, pos.z));
+            });
+            bomData.columns = 5;
+            bomData.colLen = perimH;
+
+            // 2. Perimeter Beams & Ledgers
+            const pBeam1 = new THREE.Mesh(boxGeo, matPerim);
+            const p1_pBeam1 = new THREE.Vector3(-lenX, perimH, projZ);
+            const p2_pBeam1 = new THREE.Vector3(projX, perimH, projZ);
+            const l1 = alignBeam(pBeam1, p1_pBeam1, p2_pBeam1, pPerim.w, pPerim.h);
+            dynamicGroup.add(pBeam1);
+            logCut("קורה היקפית (חזית)", p1_pBeam1, p2_pBeam1);
+            
+            const pBeam2 = new THREE.Mesh(boxGeo, matPerim);
+            const p1_pBeam2 = new THREE.Vector3(projX, perimH, -lenZ);
+            const p2_pBeam2 = new THREE.Vector3(projX, perimH, projZ);
+            const l2 = alignBeam(pBeam2, p1_pBeam2, p2_pBeam2, pPerim.w, pPerim.h);
+            dynamicGroup.add(pBeam2);
+            logCut("קורה היקפית (צד)", p1_pBeam2, p2_pBeam2);
+
+            const ledger1 = new THREE.Mesh(boxGeo, matPerim);
+            const p1_ledger1 = new THREE.Vector3(-lenX, apexH, 0);
+            const p2_ledger1 = new THREE.Vector3(0, apexH, 0);
+            const l3 = alignBeam(ledger1, p1_ledger1, p2_ledger1, pPerim.w, pPerim.h);
+            dynamicGroup.add(ledger1);
+            logCut("קורת קיר / Ledger (חזית)", p1_ledger1, p2_ledger1);
+
+            const ledger2 = new THREE.Mesh(boxGeo, matPerim);
+            const p1_ledger2 = new THREE.Vector3(0, apexH, -lenZ);
+            const p2_ledger2 = new THREE.Vector3(0, apexH, 0);
+            const l4 = alignBeam(ledger2, p1_ledger2, p2_ledger2, pPerim.w, pPerim.h);
+            dynamicGroup.add(ledger2);
+            logCut("קורת קיר / Ledger (צד)", p1_ledger2, p2_ledger2);
+            
+            bomData.perim = 4;
+            // Average length calculation for BOM
+            bomData.perimLen = (l1 + l2 + l3 + l4) / 4; 
+
+            // 3. Main Hip Rafter
+            mainRidgeBeam = new THREE.Mesh(boxGeo, matMain);
+            const pApex = new THREE.Vector3(0, apexH, 0);
+            const pCorner = new THREE.Vector3(projX, perimH, projZ);
+            const mainLen = alignBeam(mainRidgeBeam, pApex, pCorner, pMain.w, pMain.h);
+            dynamicGroup.add(mainRidgeBeam);
+            
+            bomData.mainHip = 1;
+            bomData.mainLen = mainLen;
+
+            logCut("קורה ראשית (אלכסון הרכס)", pApex, pCorner);
+
+            // Add Label for Main Rafter
+            if (showDims.checked) {
+                const lblMainDiv = document.createElement('div');
+                lblMainDiv.className = 'label';
+                lblMainDiv.textContent = `L = ${mainLen.toFixed(2)}m`;
+                document.getElementById('labels-container').appendChild(lblMainDiv);
+                
+                const lblMainPos = pApex.clone().add(pCorner).multiplyScalar(0.5);
+                lblMainPos.y += 0.4;
+                activeLabels.push({ element: lblMainDiv, pos: lblMainPos });
+            }
+
+            // 4. Common and Jack Rafters
+            let totalRafterLen = 0;
+            let rafterCount = 0;
+            let maxRafterLen = 0;
+            
+            const addRafter = (pStart, pEnd, name) => {
+                if (pStart.distanceTo(pEnd) > 0.05) {
+                    const rafter = new THREE.Mesh(boxGeo, matRafter);
+                    const rLen = alignBeam(rafter, pStart, pEnd, pRafter.w, pRafter.h);
+                    dynamicGroup.add(rafter);
+                    totalRafterLen += rLen;
+                    if (rLen > maxRafterLen) maxRafterLen = rLen;
+                    rafterCount++;
+                    logCut(name, pStart, pEnd);
+                }
+            };
+
+            // מודדים את המרווחים בדיוק מהפינה הפנימית המשותפת (x=0, z=0)
+            // חוסר האיזון (השארית) יישאר בקצוות הרחוקים של המבנה
+
+            // Front Face (parallel to Z axis)
+            // Common (x <= 0)
+            let lastX = 0;
+            for (let x = 0; x <= lenX + 0.01; x += spacing) {
+                addRafter(new THREE.Vector3(-x, apexH, 0), new THREE.Vector3(-x, perimH, projZ), "אגד קדמי (מלא)");
+                lastX = x;
+            }
+            // השלמת קורה בקצה החיצוני ביותר אם השארית לא השלימה אותו
+            if (Math.abs(lenX - lastX) > 0.05) {
+                addRafter(new THREE.Vector3(-lenX, apexH, 0), new THREE.Vector3(-lenX, perimH, projZ), "אגד קדמי (סוגר פאה)");
+            }
+
+            // Jack (x > 0)
+            for (let x = spacing; x < projX - 0.01; x += spacing) {
+                const interp = x / projX;
+                const yStart = apexH - (apexH - perimH) * interp;
+                const zStart = projZ * interp;
+                addRafter(new THREE.Vector3(x, yStart, zStart), new THREE.Vector3(x, perimH, projZ), "אגד קדמי (חתוך/Jack)");
+            }
+
+            // Side Face (parallel to X axis)
+            // Common (z <= 0) - מתחילים מ-0 כדי לבנות את הקורה שצמודה לקיר
+            let lastZ = 0;
+            for (let z = 0; z <= lenZ + 0.01; z += spacing) {
+                addRafter(new THREE.Vector3(0, apexH, -z), new THREE.Vector3(projX, perimH, -z), "אגד צדדי (מלא)");
+                lastZ = z;
+            }
+            // השלמת קורה בקצה החיצוני ביותר אם השארית לא השלימה אותו
+            if (Math.abs(lenZ - lastZ) > 0.05) {
+                addRafter(new THREE.Vector3(0, apexH, -lenZ), new THREE.Vector3(projX, perimH, -lenZ), "אגד צדדי (סוגר פאה)");
+            }
+
+            // Jack (z > 0)
+            for (let z = spacing; z < projZ - 0.01; z += spacing) {
+                const interp = z / projZ;
+                const yStart = apexH - (apexH - perimH) * interp;
+                const xStart = projX * interp;
+                addRafter(new THREE.Vector3(xStart, yStart, z), new THREE.Vector3(projX, perimH, z), "אגד צדדי (חתוך/Jack)");
+            }
+            
+            bomData.rafters = rafterCount;
+            bomData.rafterLen = rafterCount > 0 ? (totalRafterLen / rafterCount) : 0; 
+            
+            // 5. Santaf Roof Cover & Laths
+            const lathW = 0.04; // רוחב לייסט 4 ס"מ
+            const lathH = 0.02; // גובה לייסט 2 ס"מ
+            const lathSpacing = 0.6; // מרווח לייסטים של 60 ס"מ
+            const rafterTopOffset = (pRafter.h / 2) + (lathH / 2);
+
+            const slantFront = Math.hypot(projZ, apexH - perimH);
+            const slantSide = Math.hypot(projX, apexH - perimH);
+
+            if (showLaths.checked) {
+                const lathMat = new THREE.MeshStandardMaterial({ color: 0xc19a6b, roughness: 0.9 });
+                
+                // הוספת לייסטים לחזית הקדמית
+                for (let s = 0; s <= slantFront + 0.01; s += lathSpacing) {
+                    const interp = s / slantFront;
+                    const y = perimH + interp * (apexH - perimH);
+                    const z = projZ - interp * projZ;
+                    const hipX = projX * (z / projZ);
+                    
+                    const lath = new THREE.Mesh(boxGeo, lathMat);
+                    alignBeam(lath, 
+                        new THREE.Vector3(-lenX, y + rafterTopOffset, z), 
+                        new THREE.Vector3(hipX, y + rafterTopOffset, z), 
+                        lathW, lathH
+                    );
+                    // סיבוב הלייסט כך שישב שטוח על השיפוע
+                    lath.rotateZ(-Math.atan2(apexH - perimH, projZ));
+                    dynamicGroup.add(lath);
+                }
+
+                // הוספת לייסטים לחזית הצדדית
+                for (let s = 0; s <= slantSide + 0.01; s += lathSpacing) {
+                    const interp = s / slantSide;
+                    const y = perimH + interp * (apexH - perimH);
+                    const x = projX - interp * projX;
+                    const hipZ = projZ * (x / projX);
+                    
+                    const lath = new THREE.Mesh(boxGeo, lathMat);
+                    alignBeam(lath, 
+                        new THREE.Vector3(x, y + rafterTopOffset, -lenZ), 
+                        new THREE.Vector3(x, y + rafterTopOffset, hipZ), 
+                        lathW, lathH
+                    );
+                    // סיבוב הלייסט כך שישב שטוח על השיפוע
+                    lath.rotateZ(Math.atan2(apexH - perimH, projX));
+                    dynamicGroup.add(lath);
+                }
+            }
+
+            if (showSantaf.checked) {
+                // משטחי הסנטף המונחים על הלייסטים
+                const santafMat = new THREE.MeshBasicMaterial({ color: 0xa8c2db, transparent: true, opacity: 0.65, side: THREE.DoubleSide });
+                const santafOffset = (pRafter.h / 2) + lathH + 0.005; // הגבהה מעל הלייסט
+                
+                // תוספת הנדסית לבליטת הסנטף (25 ס"מ מחוץ לפרגולה למניעת נזילות)
+                const overhang = 0.25; 
+                const slopeFrontVal = (apexH - perimH) / projZ;
+                const slopeSideVal = (apexH - perimH) / projX;
+
+                // חישוב הירידה בגובה עקב המשך השיפוע בבליטה
+                const ohYFront = perimH - (slopeFrontVal * overhang);
+                const ohYSide = perimH - (slopeSideVal * overhang);
+
+                // הארכת ציר ה-X בחזית הקדמית בהתאמה לאלכסון הרכס
+                const extX_front = overhang * (projX / projZ);
+                // הארכת ציר ה-Z בחזית הצדדית בהתאמה לאלכסון הרכס
+                const extZ_side = overhang * (projZ / projX);
+
+                // Front Plane (Trapezoid extended outwards)
+                const frontGeom = new THREE.BufferGeometry();
+                const frontVerts = new Float32Array([
+                    -lenX - overhang, apexH, 0,     
+                    0, apexH, 0,       
+                    projX + extX_front, ohYFront, projZ + overhang,
+
+                    -lenX - overhang, apexH, 0,     
+                    projX + extX_front, ohYFront, projZ + overhang, 
+                    -lenX - overhang, ohYFront, projZ + overhang
+                ]);
+                frontGeom.setAttribute('position', new THREE.BufferAttribute(frontVerts, 3));
+                frontGeom.computeVertexNormals();
+                const frontRoof = new THREE.Mesh(frontGeom, santafMat);
+                frontRoof.position.y += santafOffset;
+                dynamicGroup.add(frontRoof);
+
+                // Side Plane (Trapezoid extended outwards)
+                const sideGeom = new THREE.BufferGeometry();
+                const sideVerts = new Float32Array([
+                    0, apexH, -lenZ - overhang,     
+                    0, apexH, 0,       
+                    projX + overhang, ohYSide, projZ + extZ_side,
+
+                    0, apexH, -lenZ - overhang,     
+                    projX + overhang, ohYSide, projZ + extZ_side, 
+                    projX + overhang, ohYSide, -lenZ - overhang
+                ]);
+                sideGeom.setAttribute('position', new THREE.BufferAttribute(sideVerts, 3));
+                sideGeom.computeVertexNormals();
+                const sideRoof = new THREE.Mesh(sideGeom, santafMat);
+                sideRoof.position.y += santafOffset;
+                dynamicGroup.add(sideRoof);
+
+                // חישוב שטחים כולל הבליטה עבור הצעת המחיר
+                const areaFront = 0.5 * (2 * (lenX + overhang) + (projX + extX_front)) * (slantFront + overhang);
+                const areaSide = 0.5 * (2 * (lenZ + overhang) + (projZ + extZ_side)) * (slantSide + overhang);
+                bomData.santafArea = areaFront + areaSide;
+                
+                bomData.lathLen = bomData.santafArea / 0.6; // הנחת לייסט כל 60 ס"מ
+                bomData.santafScrews = Math.ceil(bomData.santafArea * 12); // כ-12 ברגים למ"ר
+            }
+
+            bomData.woodScrews = (bomData.rafters * 4) + (bomData.columns * 8) + 20; // הערכת כמות ברגי קונסטרוקציה
+
+            // --- Dimensions and Annotations ---
+            function addDim(p1, p2, text, offset = new THREE.Vector3()) {
+                const op1 = p1.clone().add(offset);
+                const op2 = p2.clone().add(offset);
+                
+                // Line
+                const mat = new THREE.LineBasicMaterial({ color: 0x7f1d1d, transparent: true, opacity: 0.7 });
+                const geo = new THREE.BufferGeometry().setFromPoints([op1, op2]);
+                const line = new THREE.Line(geo, mat);
+                dynamicGroup.add(line);
+                
+                // End markers (ticks)
+                const markerGeo = new THREE.SphereGeometry(0.1, 12, 12);
+                const markerMat = new THREE.MeshBasicMaterial({ color: 0x7f1d1d });
+                const m1 = new THREE.Mesh(markerGeo, markerMat); m1.position.copy(op1);
+                const m2 = new THREE.Mesh(markerGeo, markerMat); m2.position.copy(op2);
+                dynamicGroup.add(m1); dynamicGroup.add(m2);
+
+                // Label (Manual HTML Overlay)
+                const div = document.createElement('div');
+                div.className = 'dim-label';
+                const isVert = Math.abs(op1.y - op2.y) > Math.abs(op1.x - op2.x) && Math.abs(op1.y - op2.y) > Math.abs(op1.z - op2.z);
+                div.innerHTML = `<span style="font-size:14px;">${isVert ? '↨' : '↔'}</span> <span>${text}</span>`;
+                
+                document.getElementById('labels-container').appendChild(div);
+                
+                const centerPos = op1.clone().lerp(op2, 0.5);
+                activeLabels.push({ element: div, pos: centerPos });
+            }
+
+            if (showDims.checked) {
+                const offZ = 0.9;
+                const offX = 0.9;
+                const floorY = 0.05; // הורדת המידות לרצפה
+                
+                // X Projection (shifted to the far edge of Y length)
+                addDim(new THREE.Vector3(0, floorY, -lenZ), new THREE.Vector3(projX, floorY, -lenZ), `מרחק מהקיר X: ${projX.toFixed(2)}m`, new THREE.Vector3(0, 0, -offZ));
+                // Y Projection (shifted to the far edge of X length)
+                addDim(new THREE.Vector3(-lenX, floorY, 0), new THREE.Vector3(-lenX, floorY, projZ), `מרחק מהקיר Y: ${projZ.toFixed(2)}m`, new THREE.Vector3(-offX, 0, 0));
+                // X Length
+                addDim(new THREE.Vector3(0, floorY, projZ), new THREE.Vector3(-lenX, floorY, projZ), `אורך קורה X: ${lenX.toFixed(2)}m`, new THREE.Vector3(0, 0, offZ));
+                // Y Length
+                addDim(new THREE.Vector3(projX, floorY, 0), new THREE.Vector3(projX, floorY, -lenZ), `אורך קורה Y: ${lenZ.toFixed(2)}m`, new THREE.Vector3(offX, 0, 0));
+                // Perimeter Height
+                addDim(new THREE.Vector3(projX, 0, projZ), new THREE.Vector3(projX, perimH, projZ), `גובה היקף: ${perimH.toFixed(2)}m`, new THREE.Vector3(offX, 0, offZ));
+                // Apex Height
+                addDim(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, apexH, 0), `גובה רכס/שיא: ${apexH.toFixed(2)}m`, new THREE.Vector3(0.5, 0, 0.5));
+            }
+
+            // --- Engineering Calculations ---
+            const deltaY = apexH - perimH;
+            const horizDist = Math.hypot(projX, projZ);
+            const slopeRad = Math.atan2(deltaY, horizDist);
+            const slopeDegrees = slopeRad * (180 / Math.PI);
+            const slopePercent = (deltaY / horizDist) * 100;
+
+            mainBeamLenDisp.textContent = mainLen.toFixed(2) + " מ'";
+            maxRafterLenDisp.textContent = maxRafterLen.toFixed(2) + " מ'";
+            slopeDeg.textContent = slopeDegrees.toFixed(1) + '°';
+            slopePct.textContent = slopePercent.toFixed(1) + '%';
+
+            // Stress Color
+            const safetyFactor = Math.max(0, Math.min(1, (slopeDegrees - 5) / 25)); 
+            const bendingStress = (1 - safetyFactor) * 100;
+            
+            mainLoadVal.textContent = Math.round(bendingStress) + '%';
+            mainLoadBar.style.width = bendingStress + '%';
+            
+            const hue = safetyFactor * 0.33; 
+            mainLoadBar.style.backgroundColor = `hsl(${hue * 360}, 90%, 45%)`;
+
+            // --- Update BOM Table ---
+            updateBOM(bomData, pCol.name, pPerim.name, pMain.name, pRafter.name, prCol, prPerim, prMain, prRafter, prSantaf, prLath, prWoodScrew, prSantafScrew);
+            
+            // --- Update Cut List ---
+            updateCutList(cutListData);
+        }
+
+        function updateCutList(cuts) {
+            cutListTableBody.innerHTML = '';
+            cuts.forEach(c => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-50 transition";
+                tr.innerHTML = `
+                    <td class="p-2 border-t text-gray-500">${c.id}</td>
+                    <td class="p-2 border-t font-medium text-gray-700">${c.name}</td>
+                    <td class="p-2 border-t font-bold text-gray-900" dir="ltr">${c.len.toFixed(3)}</td>
+                    <td class="p-2 border-t text-blue-600 font-semibold" dir="ltr">${c.pitch.toFixed(1)}&deg;</td>
+                `;
+                cutListTableBody.appendChild(tr);
+            });
+        }
+
+        function updateBOM(data, nCol, nPerim, nMain, nRafter, prCol, prPerim, prMain, prRafter, prSantaf, prLath, prWoodScrew, prSantafScrew) {
+            bomTableBody.innerHTML = '';
+            let grandTotal = 0;
+
+            const addRow = (name, profile, qty, lengthPerUnit, pricePerUnit, unitType = 'm', colorHex = null) => {
+                if(qty === 0 && lengthPerUnit === 0) return;
+                
+                let totalForPrice = 0;
+                let displayStr = "";
+                
+                if (unitType === 'sqm') {
+                    totalForPrice = lengthPerUnit;
+                    displayStr = `${totalForPrice.toFixed(2)} מ"ר`;
+                } else if (unitType === 'qty') {
+                    totalForPrice = qty;
+                    displayStr = `${qty} יח'`;
+                } else { // 'm' (running meters)
+                    totalForPrice = qty > 0 ? (qty * lengthPerUnit) : lengthPerUnit;
+                    displayStr = `${totalForPrice.toFixed(2)} מ'`;
+                }
+                
+                const rowTotal = totalForPrice * pricePerUnit;
+                grandTotal += rowTotal;
+                
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="p-2 border-t text-center">
+                        ${colorHex ? `<div class="w-4 h-4 rounded shadow-sm border border-gray-300 mx-auto" style="background-color: ${colorHex}"></div>` : ''}
+                    </td>
+                    <td class="p-2 border-t font-medium text-gray-700">${name}</td>
+                    <td class="p-2 border-t text-gray-500" dir="ltr">${profile}</td>
+                    <td class="p-2 border-t">${qty > 0 ? qty : '-'}</td>
+                    <td class="p-2 border-t">${displayStr}</td>
+                    <td class="p-2 border-t font-semibold text-gray-800">₪${Math.round(rowTotal).toLocaleString()}</td>
+                `;
+                bomTableBody.appendChild(tr);
+            };
+
+            addRow('עמוד תמך', nCol, data.columns, data.colLen, prCol, 'm', colorCol.value);
+            addRow('קורות היקף/קיר', nPerim, data.perim, data.perimLen, prPerim, 'm', colorPerim.value);
+            addRow('קורה ראשית (אלכסון)', nMain, data.mainHip, data.mainLen, prMain, 'm', colorMain.value);
+            addRow('קורות משניות', nRafter, data.rafters, data.rafterLen, prRafter, 'm', colorRafter.value);
+            
+            addRow('ברגי עץ קונסטרוקציה', '8x120', data.woodScrews, 0, prWoodScrew, 'qty', null);
+            
+            if (data.santafArea > 0) {
+                addRow('לייסטים לסנטף', '2x4', 0, data.lathLen, prLath, 'm', null);
+                addRow('חיפוי סנטף', 'גלי', 0, data.santafArea, prSantaf, 'sqm', null);
+                addRow('ברגי סנטף + דסקית', '5x50', data.santafScrews, 0, prSantafScrew, 'qty', null);
+            }
+
+            bomTotalPrice.textContent = '₪' + Math.round(grandTotal).toLocaleString();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); 
+            renderer.render(scene, camera);
+            
+            // Project 3D positions to 2D screen coordinates
+            activeLabels.forEach(labelObj => {
+                const tempPos = labelObj.pos.clone();
+                tempPos.project(camera);
+                
+                if (tempPos.z > 1) {
+                    // Pos is behind the camera
+                    labelObj.element.style.display = 'none';
+                } else {
+                    labelObj.element.style.display = 'flex'; // Use flex for dim-labels to keep icon alignment
+                    if(labelObj.element.className === 'label') labelObj.element.style.display = 'block';
+                    
+                    const x = (tempPos.x * 0.5 + 0.5) * window.innerWidth;
+                    const y = (tempPos.y * -0.5 + 0.5) * window.innerHeight;
+                    
+                    labelObj.element.style.left = `${x}px`;
+                    labelObj.element.style.top = `${y}px`;
+                }
+            });
+        }
+        
+        // Add listeners to new inputs
+        [profCol, profPerim, profMain, profRafter, priceCol, pricePerim, priceMain, priceRafter, priceSantaf, priceLath, priceWoodScrew, priceSantafScrew, showSantaf, showLaths, showDims, showCutIds, colorCol, colorPerim, colorMain, colorRafter, colorWall].forEach(el => {
+            if(el) {
+                el.addEventListener('change', updateStructure);
+                el.addEventListener('input', updateStructure);
+            }
+        });
+
+        // Print function
+        document.getElementById('btn-print-bom').addEventListener('click', () => {
+            window.print();
+        });
+
+        // UI Panel Toggles Logic
+        const controlsPanel = document.getElementById('controls-panel');
+        const bomPanel = document.getElementById('bom-panel');
+        
+        document.getElementById('btn-toggle-controls').addEventListener('click', () => controlsPanel.classList.toggle('closed'));
+        document.getElementById('btn-close-controls').addEventListener('click', () => controlsPanel.classList.add('closed'));
+        
+        document.getElementById('btn-toggle-bom').addEventListener('click', () => bomPanel.classList.toggle('closed'));
+        document.getElementById('btn-close-bom').addEventListener('click', () => bomPanel.classList.add('closed'));
+
+    </script>
+</body>
+</html>
